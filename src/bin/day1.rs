@@ -4,19 +4,34 @@ fn main() {
     let f = File::open("input/day1.txt").unwrap();
     let read = BufReader::new(f);
 
-    let mut max: usize = 0;
+    let mut top: [usize; 3] = [0,0,0];
     let mut sum: usize = 0;
 
-    for l in read.lines() {
-        let l = l.unwrap();
-        if l.is_empty() {
-            max = if sum > max {sum} else {max};
+    let mut lines = read.lines();
+    
+    loop {
+        let l = lines.next();
+        let l = l.map(|x| x.unwrap());
+        if l.is_none() || l.as_ref().unwrap().is_empty() {
+            for i in 0..3 {
+                if sum >= top[i] {
+                    // push back
+                    for j in (i+1..3).rev() {
+                        top[j] = top[j-1];
+                    }
+                    top[i] = sum;
+                    break;
+                }
+            }
             sum = 0;
         } else {
-            let calories: usize = l.parse().unwrap();
+            let calories: usize = l.as_ref().unwrap().parse().unwrap();
             sum += calories;
         }
+        if l.is_none() {break};
     }
+    let sum_top: usize = top.iter().sum();
 
-    println!("{}", max);
+    println!("{}", top[0]);
+    println!("{}", sum_top);
 }
