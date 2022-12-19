@@ -1,6 +1,6 @@
 use std::{
     cmp::{Ordering, Reverse},
-    collections::{BinaryHeap, HashMap, HashSet, VecDeque},
+    collections::{hash_map::Entry, BinaryHeap, HashMap},
     fmt::Display,
     fs::File,
     io::{BufRead, BufReader},
@@ -84,7 +84,7 @@ impl SearchNode {
     fn expand(
         &self,
         valves: &HashMap<String, Valve>,
-        routes: &HashMap<String, HashMap<String, (usize, String)>>,
+        distances: &HashMap<String, HashMap<String, usize>>,
     ) -> Vec<SearchNode> {
         let mut children: Vec<SearchNode> = Vec::new();
         if self.t >= TIMESPAN {
@@ -92,16 +92,12 @@ impl SearchNode {
         }
 
         let valve = valves.get(&self.valve).expect("valve not found");
-        let routes = routes.get(&valve.name).expect("cannot find routes");
+        let distances = &distances[&valve.name];
 
-        for (dest, (dist, _)) in routes.iter() {
+        for (dest, dist) in distances.iter() {
             // action: go to another valve and open it
             if !self.open_valves.contains(dest) {
                 let dest = valves.get(dest).expect("valve not found");
-                if dest.flow_rate == 0 {
-                    // useless
-                    continue;
-                }
                 let t = self.t + dist + 1;
                 if t > TIMESPAN {
                     continue;
@@ -153,29 +149,142 @@ impl Ord for SearchNode {
     }
 }
 
-fn bfs(source: &Valve, valves: &HashMap<String, Valve>) -> HashMap<String, (usize, String)> {
-    let mut routes: HashMap<String, (usize, String)> = HashMap::new();
-    let mut visited: HashSet<String> = HashSet::new();
-    let mut queue: VecDeque<String> = VecDeque::new();
+#[derive(Debug, Clone)]
+struct JointSearchNode(SearchNode, SearchNode);
 
-    queue.push_back(source.name.clone());
-    visited.insert(source.name.clone());
+impl JointSearchNode {
+    fn initial(valve: &Valve) -> Self {
+        let node_0 = SearchNode {
+            t: 4,
+            valve: valve.name.clone(),
+            open_valves: Vec::new(),
+            path_gain: 0,
+        };
+        let node_1 = node_0.clone();
+        Self(node_0, node_1)
+    }
 
-    while let Some(name) = queue.pop_front() {
-        let valve = valves.get(&name).expect("cannot find valve");
-        for n in valve.neighbors.iter() {
-            if !visited.contains(n) {
-                // update distance
-                let dist = routes.get(&name).map(|x| x.0).unwrap_or(0);
-                routes.insert(n.clone(), (dist + 1, name.clone()));
-                // enqueue node
-                queue.push_back(n.clone());
-                visited.insert(n.clone());
+    fn path_gain(&self) -> usize {
+        self.0.path_gain + self.1.path_gain
+    }
+
+    fn heuristic(&self, sorted_valves: &[(String, usize)]) -> usize {
+        self.0.heuristic(sorted_valves) + self.1.heuristic(sorted_valves)
+    }
+
+    fn evaluate(&self, sorted_valves: &[(String, usize)]) -> usize {
+        self.path_gain() + self.heuristic(sorted_valves)
+    }
+
+    fn expand(
+        &self,
+        valves: &HashMap<String, Valve>,
+        distances: &HashMap<String, HashMap<String, usize>>,
+    ) -> Vec<JointSearchNode> {
+        let mut children = Vec::new();
+
+        let mut children_0 = self.0.expand(valves, distances);
+        let mut children_1 = self.1.expand(valves, distances);
+
+        // if there is no other option, allow one of the two to stall
+        if children_0.is_empty() && children_1.is_empty() {
+            // terminal state
+            return children;
+        }
+        if children_0.is_empty() {
+            children_0.push(self.0.clone());
+        }
+        if children_1.is_empty() {
+            children_1.push(self.1.clone());
+        }
+
+        // create a child for each pair
+        for c0 in children_0.iter() {
+            for c1 in children_1.iter() {
+                // don't open the same valve
+                if c0.valve == c1.valve {
+                    continue;
+                }
+
+                // update the list of open valves
+                let mut c0 = c0.clone();
+                let mut c1 = c1.clone();
+                c0.open_valves.push(c1.valve.clone());
+                c1.open_valves.push(c0.valve.clone());
+
+                children.push(Self(c0, c1));
+            }
+        }
+
+        children
+    }
+}
+
+impl PartialEq for JointSearchNode {
+    fn eq(&self, other: &Self) -> bool {
+        (self.0 == other.0 && self.1 == other.1)
+        || (self.0 == other.1 && self.1 == other.0)
+    }
+}
+
+impl Eq for JointSearchNode {}
+
+impl PartialOrd for JointSearchNode {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl Ord for JointSearchNode {
+    fn cmp(&self, other: &Self) -> Ordering {
+        self.path_gain().cmp(&other.path_gain())
+    }
+}
+
+impl Display for JointSearchNode {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "JointSearchNode\n\t{}\n\t{})", self.0, self.1)
+    }
+}
+
+fn shortest_paths(valves: &HashMap<String, Valve>) -> HashMap<String, HashMap<String, usize>> {
+    let mut dist = HashMap::new();
+
+    // init
+    for valve in valves.values() {
+        let distances_v: &mut HashMap<String, usize> = dist
+            .entry(valve.name.clone())
+            .or_insert_with(|| [(valve.name.clone(), 0)].into_iter().collect());
+        for dest in valve.neighbors.iter() {
+            distances_v.insert(dest.clone(), 1);
+        }
+    }
+
+    for k in valves.keys() {
+        for i in valves.keys() {
+            for j in valves.keys() {
+                let Some(&dist_ik) = dist[i].get(k) else {
+                    continue;
+                };
+                let Some(&dist_kj) = dist[k].get(j) else {
+                    continue;
+                };
+                let &dist_ij = dist[i].get(j).unwrap_or(&usize::MAX);
+                if dist_ij > dist_ik + dist_kj {
+                    match dist.get_mut(i).unwrap().entry(j.clone()) {
+                        Entry::Occupied(mut e) => {
+                            e.insert(dist_ik + dist_kj);
+                        }
+                        Entry::Vacant(e) => {
+                            e.insert(dist_ik + dist_kj);
+                        }
+                    };
+                }
             }
         }
     }
 
-    routes
+    dist
 }
 
 fn main() {
@@ -189,7 +298,6 @@ fn main() {
             (valve.name.clone(), valve)
         })
         .collect();
-    let mut routes: HashMap<String, HashMap<String, (usize, String)>> = HashMap::new();
 
     let mut sorted_valves: Vec<(String, usize)> = valves
         .values()
@@ -199,26 +307,58 @@ fn main() {
     sorted_valves.sort_by_key(|(_, rate)| Reverse(*rate));
 
     // find shortest paths from each interesting source
-    for source in valves
-        .values()
-        .filter(|v| v.name == INITIAL_VALVE || v.flow_rate > 0)
-    {
-        let src_routes = bfs(source, &valves);
-        routes.insert(source.name.clone(), src_routes);
-    }
-
-    // show routes
-    // for (s, rs) in routes.iter() {
-    //     println!("Routes from {}", s);
-    //     for (dest, (dist, via)) in rs.iter() {
-    //         println!("\t{}: {} via {}", dest, dist, via);
-    //     }
-    // }
+    let mut distances = shortest_paths(&valves);
+    distances.retain(|i, ds| {
+        let valve = &valves[i];
+        if valve.flow_rate > 0 || valve.name == INITIAL_VALVE {
+            ds.retain(|j, _| j != i && valves[j].flow_rate > 0);
+            true
+        } else {
+            false
+        }
+    });
 
     // search (part 1)
     #[allow(clippy::mutable_key_type)]
     let mut frontier: BinaryHeap<SearchNode> = BinaryHeap::new(); // highest path_gain first
     let initial_node = SearchNode::initial(
+        valves
+            .get(INITIAL_VALVE)
+            .expect("cannot find initial valve"),
+    );
+    frontier.push(initial_node);
+
+    let mut max_path_gain: usize = 0;
+    while let Some(node) = frontier.pop() {
+        // prune
+        if node.evaluate(&sorted_valves) < max_path_gain {
+            // println!("pruning {} {}", node, node.evaluate(&sorted_valves));
+            continue;
+        }
+
+        let children = node.expand(&valves, &distances);
+
+        // terminal state
+        if children.is_empty() {
+            if node.path_gain > max_path_gain {
+                println!("New max {}", node.path_gain);
+                println!("\t for {}", node);
+                max_path_gain = node.path_gain;
+            }
+            continue;
+        }
+
+        for child in children {
+            frontier.push(child);
+        }
+    }
+
+    println!("{}", max_path_gain);
+
+    // search (part 2)
+    #[allow(clippy::mutable_key_type)]
+    let mut frontier: BinaryHeap<JointSearchNode> = BinaryHeap::new(); // highest path_gain first
+    let initial_node = JointSearchNode::initial(
         valves
             .get(INITIAL_VALVE)
             .expect("cannot find initial valve"),
@@ -237,14 +377,14 @@ fn main() {
             continue;
         }
 
-        let children = node.expand(&valves, &routes);
+        let children = node.expand(&valves, &distances);
 
         // terminal state
         if children.is_empty() {
-            if node.path_gain > max_path_gain {
-                println!("New max {}", node.path_gain);
+            if node.path_gain() > max_path_gain {
+                println!("New max {}", node.path_gain());
                 println!("\t for {}", node);
-                max_path_gain = node.path_gain;
+                max_path_gain = node.path_gain();
             }
             continue;
         }
