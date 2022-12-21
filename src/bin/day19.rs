@@ -7,8 +7,6 @@ use std::{
     io::{BufRead, BufReader},
 };
 
-const TIME_BUDGET: usize = 24;
-
 const NUM_RES: usize = 4;
 
 const ORE: usize = 0;
@@ -25,6 +23,7 @@ type Blueprint = [ResVec; NUM_RES];
 #[derive(Debug)]
 struct SearchNode {
     t: usize,
+    time_budget: usize,
     robots: ResVec,
     resources: ResVec,
     upper_bound: usize,
@@ -59,12 +58,13 @@ impl PartialOrd for SearchNode {
 }
 
 impl SearchNode {
-    fn initial(costs: &Blueprint) -> Self {
+    fn initial(time_budget: usize, costs: &Blueprint) -> Self {
         Self {
             t: 0,
+            time_budget,
             robots: [1, 0, 0, 0],
             resources: [0; NUM_RES],
-            upper_bound: compute_bound(0, &[0; NUM_RES], &[1, 0, 0, 0], costs),
+            upper_bound: compute_bound(time_budget, &[0; NUM_RES], &[1, 0, 0, 0], costs),
         }
     }
 
@@ -94,7 +94,7 @@ impl SearchNode {
 
     fn expand(&self, costs: &Blueprint) -> Vec<SearchNode> {
         let mut children = Vec::new();
-        if self.t == TIME_BUDGET {
+        if self.t == self.time_budget {
             return children;
         }
 
@@ -107,14 +107,20 @@ impl SearchNode {
         loop {
             child_t += 1;
             // terminate
-            if child_t == TIME_BUDGET {
+            if child_t == self.time_budget {
                 if children.is_empty() {
                     Self::step_resources(&mut cur_resources, &self.robots);
                     let child = SearchNode {
                         t: child_t,
+                        time_budget: self.time_budget,
                         resources: cur_resources,
                         robots: self.robots,
-                        upper_bound: compute_bound(child_t, &cur_resources, &self.robots, costs),
+                        upper_bound: compute_bound(
+                            self.time_budget - child_t,
+                            &cur_resources,
+                            &self.robots,
+                            costs,
+                        ),
                     };
                     children.push(child);
                 }
@@ -135,9 +141,15 @@ impl SearchNode {
 
                 let child = SearchNode {
                     t: child_t,
+                    time_budget: self.time_budget,
                     resources: child_resources,
                     robots: child_robots,
-                    upper_bound: compute_bound(child_t, &child_resources, &child_robots, costs),
+                    upper_bound: compute_bound(
+                        self.time_budget - child_t,
+                        &child_resources,
+                        &child_robots,
+                        costs,
+                    ),
                 };
                 rob_built[rob] = true;
                 children.push(child);
@@ -165,8 +177,13 @@ impl Display for SearchNode {
     }
 }
 
-fn compute_bound(t: usize, resources: &ResVec, robots: &ResVec, costs: &Blueprint) -> usize {
-    let dt = TIME_BUDGET - t;
+fn compute_bound(
+    remaining_time: usize,
+    resources: &ResVec,
+    robots: &ResVec,
+    costs: &Blueprint,
+) -> usize {
+    let dt = remaining_time;
 
     let spec_ore = resources[ORE] + dt * robots[ORE];
     let spec_ore = spec_ore + (spec_ore / costs[ORE][ORE]).min(dt) / 2;
@@ -178,14 +195,16 @@ fn compute_bound(t: usize, resources: &ResVec, robots: &ResVec, costs: &Blueprin
             spec_ore / costs[OBSIDIAN][ORE],
             spec_clay / costs[OBSIDIAN][CLAY],
         )
-        .min(dt) / 2;
+        .min(dt)
+            / 2;
     let spec_geode = resources[GEODE]
         + dt * robots[GEODE]
         + dt * usize::min(
             spec_ore / costs[GEODE][ORE],
             spec_obs / costs[GEODE][OBSIDIAN],
         )
-        .min(dt) / 2;
+        .min(dt)
+            / 2;
 
     spec_geode as usize
 }
@@ -227,6 +246,47 @@ fn parse_blueprint(line: &str) -> Blueprint {
     blue
 }
 
+fn solve_blueprint(time_budget: usize, costs: &Blueprint) -> usize {
+    let mut min_bound: usize = 0;
+
+    // DFS
+    let mut frontier = VecDeque::<SearchNode>::new();
+    let mut expanded = HashSet::<SearchNode>::new();
+
+    let initial_node = SearchNode::initial(time_budget, costs);
+    println!("Initial {}", initial_node);
+    frontier.push_front(initial_node);
+
+    while let Some(node) = frontier.pop_front() {
+        if node.upper_bound < min_bound {
+            continue;
+        }
+        // println!("{}", node);
+
+        // expand
+        let children = node.expand(costs);
+
+        // terminal state
+        if children.is_empty() && node.utility() > min_bound {
+            println!("New max {} for {}", node.utility(), node);
+            min_bound = node.utility();
+        }
+
+        for child in children {
+            if !expanded.contains(&child) && child.upper_bound > min_bound {
+                // println!("\t-> {}", child);
+                frontier.push_front(child);
+            } else {
+                // println!("\t-- {}", child);
+            }
+        }
+
+        expanded.insert(node);
+    }
+
+    min_bound
+}
+
 fn main() {
     let f = File::open("input/day19.txt").unwrap();
     let read = BufReader::new(f);
@@ -239,201 +299,32 @@ fn main() {
         blueprints.push(b);
     }
 
-    // dbg!(compute_bound(
-    //     0,
-    //     &[0, 0, 0, 0],
-    //     &[1, 0, 0, 0],
-    //     &blueprints[0]
-    // ));
-    // dbg!(compute_bound(
-    //     1,
-    //     &[1, 0, 0, 0],
-    //     &[1, 0, 0, 0],
-    //     &blueprints[0]
-    // ));
-    // dbg!(compute_bound(
-    //     2,
-    //     &[2, 0, 0, 0],
-    //     &[1, 0, 0, 0],
-    //     &blueprints[0]
-    // ));
-    // dbg!(compute_bound(
-    //     3,
-    //     &[1, 0, 0, 0],
-    //     &[1, 1, 0, 0],
-    //     &blueprints[0]
-    // ));
-    // dbg!(compute_bound(
-    //     4,
-    //     &[2, 1, 0, 0],
-    //     &[2, 1, 0, 0],
-    //     &blueprints[0]
-    // ));
-    // dbg!(compute_bound(
-    //     5,
-    //     &[1, 2, 0, 0],
-    //     &[2, 2, 0, 0],
-    //     &blueprints[0]
-    // ));
-    // dbg!(compute_bound(
-    //     6,
-    //     &[2, 4, 0, 0],
-    //     &[2, 2, 0, 0],
-    //     &blueprints[0]
-    // ));
-    // dbg!(compute_bound(
-    //     7,
-    //     &[1, 6, 0, 0],
-    //     &[2, 3, 0, 0],
-    //     &blueprints[0]
-    // ));
-    // dbg!(compute_bound(
-    //     8,
-    //     &[2, 9, 0, 0],
-    //     &[2, 3, 0, 0],
-    //     &blueprints[0]
-    // ));
-    // dbg!(compute_bound(
-    //     9,
-    //     &[3, 12, 0, 0],
-    //     &[2, 3, 0, 0],
-    //     &blueprints[0]
-    // ));
-    // dbg!(compute_bound(
-    //     10,
-    //     &[4, 15, 0, 0],
-    //     &[2, 3, 0, 0],
-    //     &blueprints[0]
-    // ));
-    // dbg!(compute_bound(
-    //     11,
-    //     &[2, 4, 0, 0],
-    //     &[2, 3, 1, 0],
-    //     &blueprints[0]
-    // ));
-    // dbg!(compute_bound(
-    //     12,
-    //     &[1, 7, 1, 0],
-    //     &[2, 4, 1, 0],
-    //     &blueprints[0]
-    // ));
-    // dbg!(compute_bound(
-    //     13,
-    //     &[2, 11, 2, 0],
-    //     &[2, 4, 1, 0],
-    //     &blueprints[0]
-    // ));
-    // dbg!(compute_bound(
-    //     14,
-    //     &[3, 15, 3, 0],
-    //     &[2, 4, 1, 0],
-    //     &blueprints[0]
-    // ));
-    // dbg!(compute_bound(
-    //     15,
-    //     &[1, 5, 4, 0],
-    //     &[2, 4, 2, 0],
-    //     &blueprints[0]
-    // ));
-    // dbg!(compute_bound(
-    //     16,
-    //     &[2, 9, 6, 0],
-    //     &[2, 4, 2, 0],
-    //     &blueprints[0]
-    // ));
-    // dbg!(compute_bound(
-    //     17,
-    //     &[3, 13, 8, 0],
-    //     &[2, 4, 2, 0],
-    //     &blueprints[0]
-    // ));
-    // dbg!(compute_bound(
-    //     18,
-    //     &[2, 17, 3, 0],
-    //     &[2, 4, 2, 1],
-    //     &blueprints[0]
-    // ));
-    // dbg!(compute_bound(
-    //     19,
-    //     &[3, 21, 5, 1],
-    //     &[2, 4, 2, 1],
-    //     &blueprints[0]
-    // ));
-    // dbg!(compute_bound(
-    //     20,
-    //     &[4, 25, 7, 2],
-    //     &[2, 4, 2, 1],
-    //     &blueprints[0]
-    // ));
-    // dbg!(compute_bound(
-    //     21,
-    //     &[3, 29, 2, 3],
-    //     &[2, 4, 2, 2],
-    //     &blueprints[0]
-    // ));
-    // dbg!(compute_bound(
-    //     22,
-    //     &[4, 33, 4, 5],
-    //     &[2, 4, 2, 2],
-    //     &blueprints[0]
-    // ));
-    // dbg!(compute_bound(
-    //     23,
-    //     &[5, 37, 6, 7],
-    //     &[2, 4, 2, 2],
-    //     &blueprints[0]
-    // ));
-    // dbg!(compute_bound(
-    //     24,
-    //     &[6, 41, 8, 9],
-    //     &[2, 4, 2, 2],
-    //     &blueprints[0]
-    // ));
+    // part 1
+    println!("Part 1");
+    let ql_sum: usize = blueprints
+        .iter()
+        .enumerate()
+        .map(|(i, costs)| {
+            println!("Blueprint {}", i);
 
-    let mut quality_levels = Vec::<usize>::new();
+            let sol = solve_blueprint(24, costs);
+            sol * i
+        })
+        .sum();
 
-    for (i, blueprint) in blueprints.iter().enumerate() {
-        println!("Blueprint {}", i+1);
-        let mut min_bound: usize = 0;
-
-        // DFS
-        let mut frontier = VecDeque::<SearchNode>::new();
-        let mut expanded = HashSet::<SearchNode>::new();
-
-        let initial_node = SearchNode::initial(blueprint);
-        println!("Initial {}", initial_node);
-        frontier.push_front(initial_node);
-
-        while let Some(node) = frontier.pop_front() {
-            if node.upper_bound < min_bound {
-                continue;
-            }
-            // println!("{}", node);
-
-            // expand
-            let children = node.expand(blueprint);
-
-            // terminal state
-            if children.is_empty() && node.utility() > min_bound {
-                println!("New max {} for {}", node.utility(), node);
-                min_bound = node.utility();
-            }
-
-            for child in children {
-                if !expanded.contains(&child) && child.upper_bound > min_bound {
-                    // println!("\t-> {}", child);
-                    frontier.push_front(child);
-                } else {
-                    // println!("\t-- {}", child);
-                }
-            }
-
-            expanded.insert(node);
-        }
-
-        quality_levels.push((i+1) * min_bound);    
-    }
-
-    let ql_sum: usize = quality_levels.iter().sum();
     println!("{}", ql_sum);
+
+    // part 2
+    println!("Part 2");
+    let sol_prod: usize = blueprints
+        .iter()
+        .take(3)
+        .enumerate()
+        .map(|(i, costs)| {
+            println!("Blueprint {}", i);
+            solve_blueprint(32, costs)
+        })
+        .product();
+
+    println!("{}", sol_prod);
 }
