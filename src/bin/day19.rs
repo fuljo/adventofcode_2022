@@ -89,7 +89,7 @@ impl SearchNode {
     }
 
     fn utility(&self) -> usize {
-        self.resources[GEODE] as usize
+        self.resources[GEODE]
     }
 
     fn expand(&self, costs: &Blueprint) -> Vec<SearchNode> {
@@ -206,7 +206,8 @@ fn compute_bound(
         .min(dt)
             / 2;
 
-    spec_geode as usize
+    #[allow(clippy::let_and_return)]
+    spec_geode
 }
 
 fn parse_res(s: &str) -> Res {

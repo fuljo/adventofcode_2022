@@ -19,8 +19,8 @@ impl Sub<Pos> for Pos {
     type Output = Pos;
     fn sub(self, rhs: Pos) -> Self::Output {
         Pos(
-            (self.0 - rhs.0).min(1).max(-1),
-            (self.1 - rhs.1).min(1).max(-1),
+            (self.0 - rhs.0).clamp(-1, 1),
+            (self.1 - rhs.1).clamp(-1, 1),
         )
     }
 }

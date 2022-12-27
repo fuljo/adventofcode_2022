@@ -383,7 +383,7 @@ fn search_sol(map: Map) -> (Map, usize) {
     frontier.push(SearchNode::new(&map_t[0]));
 
     // Search
-    let mut sol: usize = usize::MAX;
+    let mut cost: usize = usize::MAX;
     while let Some(node) = frontier.pop() {
         if visited.contains(&node) {
             continue;
@@ -393,7 +393,7 @@ fn search_sol(map: Map) -> (Map, usize) {
         // goal
         if node.pos == map_t[0].end {
             println!("Solution: {}", node);
-            sol = node.t;
+            cost = node.t;
             break;
         }
 
@@ -405,7 +405,7 @@ fn search_sol(map: Map) -> (Map, usize) {
         }
         visited.insert(node);
     }
-    (map_t.remove(sol), sol)
+    (map_t.remove(cost), cost)
 }
 
 fn main() {
